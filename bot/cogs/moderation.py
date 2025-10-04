@@ -4,7 +4,7 @@ from discord.ext import commands
 import aiosqlite
 import datetime
 
-DATABASE_PATH = 'bot/database/moderation.db'
+DATABASE_PATH = 'database/moderation.db'
 
 async def get_log_channel_id(guild_id: int) -> int | None:
     """Fetches the log channel ID for a given guild from the database."""
@@ -38,7 +38,7 @@ class ModerationCog(commands.Cog):
         moderator = interaction.user
         try:
             async with aiosqlite.connect(DATABASE_PATH) as db:
-                await db.execute("INSERT INTO warnings (guild_id, user_id, moderator_id, reason) VALUES (?, ?, ?, ?)", (guild_id, usuario.id, moderator.id, razon))
+                await db.execute("INSERT INTO warnings (guild_id, user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?, ?)", (guild_id, usuario.id, moderator.id, razon, datetime.datetime.now(datetime.timezone.utc).isoformat()))
                 await db.commit()
         except Exception as e:
             await interaction.followup.send(f"❌ Error al guardar la advertencia: {e}", ephemeral=True)
@@ -62,21 +62,44 @@ class ModerationCog(commands.Cog):
     @app_commands.describe(usuario="El usuario cuyo historial quieres ver.")
     @app_commands.checks.has_permissions(manage_messages=True)
     async def history(self, interaction: discord.Interaction, usuario: discord.Member):
-        await interaction.response.defer(ephemeral=True)
-        embed = discord.Embed(title=f"Historial de Moderación de {usuario.name}", color=discord.Color.blue())
-        embed.set_thumbnail(url=usuario.avatar.url if usuario.avatar else discord.Embed.Empty)
-        embed.set_footer(text=f"ID: {usuario.id}")
-        history_found = False
-        async with aiosqlite.connect(DATABASE_PATH) as db:
-            async with db.execute("SELECT moderator_id, reason, timestamp FROM warnings WHERE guild_id = ? AND user_id = ? ORDER BY timestamp DESC", (interaction.guild.id, usuario.id)) as cursor:
-                warnings = await cursor.fetchall()
-                if warnings:
-                    history_found = True
-                    value = "".join([f"- **Razón:** {r} | **Por:** <@{m_id}> | {discord.utils.format_dt(datetime.datetime.fromisoformat(ts), style='R')}\n" for m_id, r, ts in warnings[:5]])
-                    embed.add_field(name=f"Advertencias ({len(warnings)})", value=value, inline=False)
-        if not history_found:
-            embed.description = "Este usuario no tiene un historial de moderación."
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
+            embed = discord.Embed(title=f"Historial de Moderación de {usuario.name}", color=discord.Color.blue())
+            embed.set_footer(text=f"ID: {usuario.id}")
+            try:
+                embed.set_thumbnail(url=usuario.display_avatar.url)
+            except:
+                pass
+            history_found = False
+            try:
+                async with aiosqlite.connect(DATABASE_PATH) as db:
+                    async with db.execute("SELECT moderator_id, reason, timestamp FROM warnings WHERE guild_id = ? AND user_id = ? ORDER BY timestamp DESC", (interaction.guild.id, usuario.id)) as cursor:
+                        warnings = await cursor.fetchall()
+                        if warnings:
+                            history_found = True
+                            value = ""
+                            for m_id, r, ts in warnings[:5]:
+                                try:
+                                    dt = datetime.datetime.fromisoformat(ts)
+                                    time_str = discord.utils.format_dt(dt, style='R')
+                                except:
+                                    time_str = "Fecha desconocida"
+                                value += f"- **Razón:** {r} | **Por:** <@{m_id}> | {time_str}\n"
+                            if len(value) > 1024:
+                                value = value[:1021] + "..."
+                            embed.add_field(name=f"Advertencias ({len(warnings)})", value=value, inline=False)
+            except Exception as e:
+                print(f"Database error: {e}")
+                embed.add_field(name="Error", value="Error al acceder a la base de datos.", inline=False)
+            if not history_found:
+                embed.description = "Este usuario no tiene un historial de moderación."
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            print(f"Command error: {e}")
+            try:
+                await interaction.followup.send("Ocurrió un error inesperado.", ephemeral=True)
+            except:
+                pass
 
     @mod_group.command(name="kick", description="Expulsa a un usuario del servidor.")
     @app_commands.describe(usuario="El usuario que quieres expulsar.", razon="La razón de la expulsión.")
@@ -90,7 +113,7 @@ class ModerationCog(commands.Cog):
         except discord.Forbidden: pass
         await usuario.kick(reason=razon)
         async with aiosqlite.connect(DATABASE_PATH) as db:
-            await db.execute("INSERT INTO kicks (guild_id, user_id, moderator_id, reason) VALUES (?, ?, ?, ?)", (interaction.guild.id, usuario.id, interaction.user.id, razon))
+            await db.execute("INSERT INTO kicks (guild_id, user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?, ?)", (interaction.guild.id, usuario.id, interaction.user.id, razon, datetime.datetime.now(datetime.timezone.utc).isoformat()))
             await db.commit()
         await interaction.followup.send(f"✅ {usuario.mention} ha sido expulsado.", ephemeral=True)
         log_channel_id = await get_log_channel_id(interaction.guild.id)
@@ -111,7 +134,7 @@ class ModerationCog(commands.Cog):
         except discord.Forbidden: pass
         await usuario.ban(reason=razon)
         async with aiosqlite.connect(DATABASE_PATH) as db:
-            await db.execute("INSERT INTO bans (guild_id, user_id, moderator_id, reason) VALUES (?, ?, ?, ?)", (interaction.guild.id, usuario.id, interaction.user.id, razon))
+            await db.execute("INSERT INTO bans (guild_id, user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?, ?)", (interaction.guild.id, usuario.id, interaction.user.id, razon, datetime.datetime.now(datetime.timezone.utc).isoformat()))
             await db.commit()
         await interaction.followup.send(f"✅ {usuario.mention} ha sido baneado.", ephemeral=True)
         log_channel_id = await get_log_channel_id(interaction.guild.id)
@@ -132,7 +155,7 @@ class ModerationCog(commands.Cog):
             return await interaction.followup.send(f"❌ Formato de duración inválido: {e}", ephemeral=True)
         await usuario.timeout(end_time, reason=razon)
         async with aiosqlite.connect(DATABASE_PATH) as db:
-            await db.execute("INSERT INTO mutes (guild_id, user_id, moderator_id, reason, end_timestamp) VALUES (?, ?, ?, ?, ?)", (interaction.guild.id, usuario.id, interaction.user.id, razon, end_time.isoformat()))
+            await db.execute("INSERT INTO mutes (guild_id, user_id, moderator_id, reason, end_timestamp, timestamp) VALUES (?, ?, ?, ?, ?, ?)", (interaction.guild.id, usuario.id, interaction.user.id, razon, end_time.isoformat(), datetime.datetime.now(datetime.timezone.utc).isoformat()))
             await db.commit()
         await interaction.followup.send(f"✅ {usuario.mention} ha sido silenciado hasta {discord.utils.format_dt(end_time, style='R')}.", ephemeral=True)
         log_channel_id = await get_log_channel_id(interaction.guild.id)

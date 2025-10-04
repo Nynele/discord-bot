@@ -6,8 +6,6 @@ from dotenv import load_dotenv
 import aiosqlite
 
 # --- Configuration ---
-load_dotenv()
-BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE_PATH = 'database/moderation.db'
 
 # --- Bot Initialization ---
@@ -51,23 +49,23 @@ async def on_ready():
 # --- Main Execution ---
 async def main():
     """Main function to set up and run the bot."""
-    # Move database to the bot directory
-    if not os.path.exists('bot/' + DATABASE_PATH):
-        if not os.path.exists('bot/database'):
-            os.makedirs('bot/database')
-
-    global DATABASE_PATH
-    DATABASE_PATH = 'bot/' + DATABASE_PATH
-
+    # Change to bot directory if running from root
+    if not os.path.exists('database'):
+        os.chdir('bot')
+    load_dotenv()
+    BOT_TOKEN = os.getenv("DISCORD_TOKEN")
+    
+    if BOT_TOKEN is None:
+        raise ValueError("Error: DISCORD_TOKEN not found. Please create a .env file with your bot's token.")
+    
     await initialize_database()
     await load_cogs()
     await bot.start(BOT_TOKEN)
 
 if __name__ == "__main__":
-    if BOT_TOKEN is None:
-        print("Error: DISCORD_TOKEN not found. Please create a .env file with your bot's token.")
-    else:
-        try:
-            asyncio.run(main())
-        except KeyboardInterrupt:
-            print("Bot shutting down.")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot shutting down.")
+    except ValueError as e:
+        print(e)
